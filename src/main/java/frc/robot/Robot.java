@@ -42,7 +42,7 @@ public class Robot extends TimedRobot {
   private final Solenoid intake = new Solenoid(11, PneumaticsModuleType.CTREPCM, 4);
   private final Solenoid stopper = new Solenoid(11, PneumaticsModuleType.CTREPCM, 6);
   private final Solenoid shifter = new Solenoid(11, PneumaticsModuleType.CTREPCM, 5);
-  private final DoubleSolenoid climbPiston = new DoubleSolenoid(11,PneumaticsModuleType.CTREPCM,0,2);
+  private final DoubleSolenoid climbPiston = new DoubleSolenoid(11,PneumaticsModuleType.CTREPCM,0,1);
 
   private final DigitalInput shootPhotoGate = new DigitalInput(0);
  
@@ -53,8 +53,8 @@ public class Robot extends TimedRobot {
   private double finetuning = 0.0;
   private double xboxLeftX = 0.0; 
 
-  private static final String kDefaultAuto = "Default";
-  private static final String kCustomAuto = "My Auto";
+  private static final String kDefaultAuto = "Far Auto";
+  private static final String kCloseAuto = "Close Auto";
   private String m_autoSelected;
   private final SendableChooser<String> m_chooser = new SendableChooser<>();
 
@@ -63,18 +63,20 @@ public class Robot extends TimedRobot {
 
   //climb
   double minClimbPos = 0;
-  double maxClimbPos = 100;
-  double climbSpeed = 5;
-  double climbPosTol = 5;
-  double climbUpPower = 0.5;
-  double climbDownPower = -0.5;
+  double maxClimbPos = 97;
+  double climbSpeed = 10;
+  double climbPosTol = 2.5;
+  double climbProportional = 1;
+  double maxClimbUpPower = 0.5;
+  double maxClimbDownPower = -0.5;
+
   //do not edit
   double climbSetPos = 0;
 
   @Override
   public void robotInit() {
-    m_chooser.setDefaultOption("Simple Auto", kDefaultAuto);
-    m_chooser.addOption("Other Auto", kCustomAuto);
+    m_chooser.setDefaultOption("Far Auto", kDefaultAuto);
+    m_chooser.addOption("Close Auto", kCloseAuto);
     SmartDashboard.putData("Auto choices", m_chooser);
     bl.follow(fl);
     br.follow(fr);
@@ -87,6 +89,7 @@ public class Robot extends TimedRobot {
     shooterLeft.setIdleMode(IdleMode.kCoast);
     climbTop.setIdleMode(IdleMode.kBrake);
     climbBottom.setIdleMode(IdleMode.kBrake);
+    climbSetPos = getClimbPos();
   }
 
   @Override
@@ -98,6 +101,7 @@ public class Robot extends TimedRobot {
     // m_autoSelected = SmartDashboard.getString("Auto Selector", kDefaultAuto);
     System.out.println("Auto selected: " + m_autoSelected);
     autoTimer.reset();
+    autoTimer.start();
   }
 
   @Override
@@ -106,27 +110,49 @@ public class Robot extends TimedRobot {
       case kDefaultAuto:
       default:
         // Put default auto code here
-        autoTimer.reset();
-        autoTimer.start();
-        if (autoTimer.get() < 1){
-          drive.arcadeDrive(0.75, 0);
+        shifter.set(true);
+        if (autoTimer.get() < 3){
+          drive.arcadeDrive(-0.65, 0);
+          intake.set(true);
+          intakeRoller.set(0.65);
         }
-        else if (autoTimer.get() < 2){
+        else if (autoTimer.get() < 4){
           drive.arcadeDrive(0, 0);
         }
         else if (autoTimer.get() < 5){
-          setFlywheel(1.0);
-          if (autoTimer.get()>4){
+          intake.set(false);
+          intakeRoller.set(0);
+          setFlywheel(0.62);
+          if (autoTimer.get()>4.1 && autoTimer.get()<4.3){
+            shoot();
+          }
+          if (autoTimer.get()>4.6&&autoTimer.get()<4.9){
             shoot();
           }
         }
-        if (autoTimer.get() > 5){
+        if (autoTimer.get() > 6){
           stopFlywheel();
         }
 
         break;
-      case kCustomAuto:
+      case kCloseAuto:
         // Put custom auto code here
+        if (autoTimer.get() < 3){
+          setFlywheel(0.55);
+        }
+        else if (autoTimer.get() < 4){
+          shoot();
+        }
+        else if (autoTimer.get() > 5){
+          stopFlywheel();
+          if (autoTimer.get()>5 && autoTimer.get()<6.5){
+            drive.arcadeDrive(-0.75, 0);
+          }
+        }
+        if (autoTimer.get() > 6.5){
+          stopFlywheel();
+          drive.arcadeDrive(0, 0);
+        }
         break;
     }
   }
@@ -211,6 +237,8 @@ public class Robot extends TimedRobot {
     SmartDashboard.putBoolean("PhotoGate", shootPhotoGate.get());
     SmartDashboard.putNumber("Right Neo Temp", shooterRight.getMotorTemperature());
     SmartDashboard.putNumber("Left Neo Temp", shooterLeft.getMotorTemperature());
+    SmartDashboard.putNumber("Climb Neos", (climbBottom.get()+climbTop.get())/2);
+    SmartDashboard.putNumber("Top Climb", getClimbPos());
   }
 
   /** This function is called once when the robot is disabled. */
@@ -254,24 +282,26 @@ public class Robot extends TimedRobot {
       }
     }
   }
-  public void setClimb(double pos){
+  void setClimb(double pos){
     climbSetPos = Math.max(minClimbPos, Math.min(maxClimbPos, pos));
   }
-  public void moveClimb(double amount){
-    setClimb(climbSetPos + amount);
+  void moveClimb(double amount){
+    setClimb(getClimbPos() + amount);
+  }
+  double getClimbPos(){
+    return (climbTop.getEncoder().getPosition() + climbBottom.getEncoder().getPosition()) / 2.0;
+  }
+  void setClimbPower(double power){
+    double pow = Math.max(maxClimbDownPower, Math.min(maxClimbUpPower, power));
+    climbTop.set(pow);
+    climbBottom.set(pow);
   }
   void runClimb(){
-    double currPos = climbTop.getEncoder().getPosition();
-    if(currPos > climbSetPos + climbPosTol){
-      climbTop.set(climbDownPower);
-      climbBottom.set(climbDownPower);
-    }else if(currPos < climbSetPos - climbPosTol){
-      climbTop.set(climbUpPower);
-      climbBottom.set(climbUpPower);
-    }
-    else{
-      climbTop.set(0);
-      climbBottom.set(0);
+    double error = climbSetPos - getClimbPos();
+    if(Math.abs(error) > climbPosTol){ 
+      setClimbPower(error * climbProportional);
+    }else{
+      setClimbPower(0);
     }
   }
 }
