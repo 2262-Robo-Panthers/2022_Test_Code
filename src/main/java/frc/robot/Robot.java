@@ -14,6 +14,7 @@ import com.revrobotics.CANSparkMax.IdleMode;
 import com.revrobotics.CANSparkMaxLowLevel.MotorType;
 
 import edu.wpi.first.cameraserver.CameraServer;
+import edu.wpi.first.math.controller.PIDController;
 import edu.wpi.first.wpilibj.Compressor;
 import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.DoubleSolenoid;
@@ -48,8 +49,6 @@ public class Robot extends TimedRobot {
   private final DoubleSolenoid climbPiston = new DoubleSolenoid(11,PneumaticsModuleType.CTREPCM,3,2);
 
   private final DigitalInput shootPhotoGate = new DigitalInput(0);
-  private SparkMaxPIDController shooterPID = shooterLeft.getPIDController();
-  private RelativeEncoder shooterEncoder = shooterRight.getEncoder(); 
  
   private final XboxController xbox = new XboxController(0);
 
@@ -70,9 +69,8 @@ public class Robot extends TimedRobot {
   private static final Double k80 = 0.8;
   private static final Double k100 = 1.0;
   private final SendableChooser<Double> climbPowerSetter = new SendableChooser<>();
-  private final SendableChooser<Double> flywheelPowerSetter = new SendableChooser<>();
+  private final SendableChooser<Integer> flywheelRPMSetter = new SendableChooser<>();
 
-  private double flywheelSpeed = 0;
   private final Timer autoTimer = new Timer();
 
   //climb
@@ -84,14 +82,20 @@ public class Robot extends TimedRobot {
   double maxClimbUpPower = 0.65;
   double maxClimbDownPower = -0.5;
 
-  // double kP = 6e-5; 
-  // double kI = 0;
-  // double kD = 0; 
-  // double kIz = 0; 
-  // double kFF = 0.000015; 
-  // double kMaxOutput = 1; 
-  // double kMinOutput = -1;
-  // double maxRPM = 4500;
+  //----------launch----------//
+  //PID
+  private PIDController shooterPID = new PIDController(0, 0, 0);
+   double kP = 6e-5; 
+   double kI = 0;
+   double kD = 0; 
+   double kIz = 1; 
+   //double kFF = 0.000015; 
+   double kMaxOutput = 1; 
+   double kMinOutput = 0;
+  //other
+  double LaunchMinRPM = 0;
+  double LaunchMaxRPM = 7500;
+  double LaunchRPM = 0;
 
   //do not edit
   //double climbSetPos = 0;
@@ -108,12 +112,12 @@ public class Robot extends TimedRobot {
     climbPowerSetter.addOption("80%", k80);
     climbPowerSetter.addOption("100%", k100);
     SmartDashboard.putData("Climb Power", climbPowerSetter);
-    flywheelPowerSetter.addOption("37.5%", k38);
+    flywheelRPMSetter.addOption("1000 PRM", 1000);
     flywheelPowerSetter.addOption("65%", k65);
     flywheelPowerSetter.addOption("75%", k75);
     flywheelPowerSetter.addOption("80%", k80);
     flywheelPowerSetter.setDefaultOption("100%", k100);
-    SmartDashboard.putData("Flywheel Power", flywheelPowerSetter);
+    SmartDashboard.putData("Flywheel Set RPM", RPM);
 
     bl.follow(fl);
     br.follow(fr);
@@ -133,15 +137,12 @@ public class Robot extends TimedRobot {
     CameraServer.startAutomaticCapture(0);
     CameraServer.startAutomaticCapture(1);
 
-    // shooterPID = shooterRight.getPIDController();
-    // shooterEncoder = shooterRight.getEncoder();
-
-    // shooterPID.setP(kP);
-    // shooterPID.setI(kI);
-    // shooterPID.setD(kD);
-    // shooterPID.setIZone(kIz);
+     shooterPID.setP(kP);
+     shooterPID.setI(kI);
+     shooterPID.setD(kD);
+    //shooterPID.setIZone(kIz);
     // shooterPID.setFF(kFF);
-    // shooterPID.setOutputRange(kMinOutput, kMaxOutput);
+     shooterPID.setIntegratorRange(0, kIz);
     
   }
 
@@ -307,22 +308,21 @@ public class Robot extends TimedRobot {
   /** This function is called periodically during operator control. */
   @Override
   public void teleopPeriodic() {
-    // double p = SmartDashboard.getNumber("P Gain", 0);
-    // double i = SmartDashboard.getNumber("I Gain", 0);
-    // double d = SmartDashboard.getNumber("D Gain", 0);
-    // double iz = SmartDashboard.getNumber("I Zone", 0);
+     double p = SmartDashboard.getNumber("P Gain", 0);
+     double i = SmartDashboard.getNumber("I Gain", 0);
+     double d = SmartDashboard.getNumber("D Gain", 0);
+     double iz = SmartDashboard.getNumber("I Zone", 0);
     // double ff = SmartDashboard.getNumber("Feed Forward", 0);
-    // double max = SmartDashboard.getNumber("Max Output", 0);
-    // double min = SmartDashboard.getNumber("Min Output", 0);
+     double max = SmartDashboard.getNumber("Max Output", 0);
+     double min = SmartDashboard.getNumber("Min Output", 0);
 
-    // if((p != kP)) { shooterPID.setP(p); kP = p; }
-    // if((i != kI)) { shooterPID.setI(i); kI = i; }
-    // if((d != kD)) { shooterPID.setD(d); kD = d; }
-    // if((iz != kIz)) { shooterPID.setIZone(iz); kIz = iz; }
+     if((p != kP)) { shooterPID.setP(p); kP = p; }
+     if((i != kI)) { shooterPID.setI(i); kI = i; }
+     if((d != kD)) { shooterPID.setD(d); kD = d; }
+     if((iz != kIz)) { shooterPID.setIZone(iz); kIz = iz; }
     // if((ff != kFF)) { shooterPID.setFF(ff); kFF = ff; }
-    // if((max != kMaxOutput) || (min != kMinOutput)) { 
-    //   shooterPID.setOutputRange(min, max); 
-    //   kMinOutput = min; kMaxOutput = max; 
+     if((max != kMaxOutput) || (min != kMinOutput)) {  
+       kMinOutput = min; kMaxOutput = max; 
     //}
     maxClimbDownPower=climbPowerSetter.getSelected() * -1;
     //bl.set(-0.5);
