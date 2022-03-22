@@ -1,7 +1,3 @@
-// Copyright (c) FIRST and other WPILib contributors.
-// Open Source Software; you can modify and/or share it under the terms of
-// the WPILib BSD license file in the root directory of this project.
-
 package frc.robot;
 
 import com.ctre.phoenix.motorcontrol.NeutralMode;
@@ -14,7 +10,9 @@ import com.revrobotics.CANSparkMax.IdleMode;
 import com.revrobotics.CANSparkMaxLowLevel.MotorType;
 
 import edu.wpi.first.cameraserver.CameraServer;
-import edu.wpi.first.math.controller.PIDController;
+import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.kinematics.DifferentialDriveOdometry;
 import edu.wpi.first.wpilibj.Compressor;
 import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.DoubleSolenoid;
@@ -49,6 +47,8 @@ public class Robot extends TimedRobot {
   private final DoubleSolenoid climbPiston = new DoubleSolenoid(11,PneumaticsModuleType.CTREPCM,3,2);
 
   private final DigitalInput shootPhotoGate = new DigitalInput(0);
+  private SparkMaxPIDController shooterPID = shooterLeft.getPIDController();
+  private RelativeEncoder shooterEncoder = shooterRight.getEncoder(); 
  
   private final XboxController xbox = new XboxController(0);
 
@@ -60,18 +60,25 @@ public class Robot extends TimedRobot {
   private static final String kCloseAuto = "Close Auto 1 Ball";
   private static final String kCloseAuto2 = "Close Auto 2 Ball";
   private static final String kCloseAuto3 = "Close Auto Defense";
+  private static final String kCloseAuto4 = "Close Auto 1 Ball High";
+  private static final String kCloseAuto5 = "Close Auto 4 Ball High";
+  private static final String kCloseAuto6 = "Close Auto 4 Ball High OD";
   private String m_autoSelected;
   private final SendableChooser<String> m_chooser = new SendableChooser<>();
   private static final Double k38 = 0.375;
   private static final Double k50 = 0.5;
+  private static final Double k60 = 0.6;
   private static final Double k65 = 0.65;
   private static final Double k75 = 0.75;
   private static final Double k80 = 0.8;
   private static final Double k100 = 1.0;
   private final SendableChooser<Double> climbPowerSetter = new SendableChooser<>();
-  private final SendableChooser<Integer> flywheelRPMSetter = new SendableChooser<>();
+  private final SendableChooser<Double> flywheelPowerSetter = new SendableChooser<>();
 
+  private double flywheelSpeed = 0;
   private final Timer autoTimer = new Timer();
+
+  DifferentialDriveOdometry m_odometry = new DifferentialDriveOdometry(new Rotation2d(), new Pose2d(0.0,0.0,new Rotation2d()));
 
   //climb
   //double minClimbPos = -1000;
@@ -82,52 +89,62 @@ public class Robot extends TimedRobot {
   double maxClimbUpPower = 0.65;
   double maxClimbDownPower = -0.5;
 
-  //----------launch----------//
-  //PID
-  private PIDController shooterPID = new PIDController(0, 0, 0);
-   double kP = 6e-5; 
-   double kI = 0;
-   double kD = 0; 
-   double kIz = 1; 
-   //double kFF = 0.000015; 
-   double kMaxOutput = 1; 
-   double kMinOutput = 0;
-  //other
-  double LaunchMinRPM = 0;
-  double LaunchMaxRPM = 7500;
-  double LaunchRPM = 0;
+  // double kP = 6e-5; 
+  // double kI = 0;
+  // double kD = 0; 
+  // double kIz = 0; 
+  // double kFF = 0.000015; 
+  // double kMaxOutput = 1; 
+  // double kMinOutput = -1;
+  // double maxRPM = 4500;
+
+
+  private double dashFlySpeed;
 
   //do not edit
   //double climbSetPos = 0;
 
+  //position tracking
+  private double ticksPerDegree = 18.93;
+  private Pose2d startPose2d = new Pose2d(0,0, Rotation2d.fromDegrees(0));
+  //do not edit
+  private double angle = 0;
+  private double angleOffset = 0;
+  private Pose2d robotPose = new Pose2d();
+
+
   @Override
   public void robotInit() {
-    m_chooser.setDefaultOption("Far Auto", kDefaultAuto);
-    m_chooser.addOption("Close Auto 1 Ball", kCloseAuto);
-    m_chooser.addOption("Close Auto 2 Ball", kCloseAuto2);
-    m_chooser.addOption("Close Auto Defense", kCloseAuto3);
+    m_chooser.setDefaultOption("Far Auto L", kDefaultAuto);
+    m_chooser.addOption("Close Auto 1 Ball L", kCloseAuto);
+    m_chooser.addOption("Close Auto 2 Ball L", kCloseAuto2);
+    m_chooser.addOption("Close Auto Defense L", kCloseAuto3);
+    m_chooser.addOption("High Auto 1 Ball H", kCloseAuto4);
+    m_chooser.addOption("4 Ball Auto H", kCloseAuto5);
+    m_chooser.addOption("4 Ball Auto H OD", kCloseAuto6);
     SmartDashboard.putData("Auto choices", m_chooser);
     climbPowerSetter.setDefaultOption("50%", k50);
     climbPowerSetter.addOption("65%", k65);
     climbPowerSetter.addOption("80%", k80);
     climbPowerSetter.addOption("100%", k100);
     SmartDashboard.putData("Climb Power", climbPowerSetter);
-    flywheelRPMSetter.addOption("1000 PRM", 1000);
+    flywheelPowerSetter.addOption("37.5%", k38);
+    flywheelPowerSetter.addOption("60%", k60);
     flywheelPowerSetter.addOption("65%", k65);
     flywheelPowerSetter.addOption("75%", k75);
     flywheelPowerSetter.addOption("80%", k80);
     flywheelPowerSetter.setDefaultOption("100%", k100);
-    SmartDashboard.putData("Flywheel Set RPM", RPM);
+    SmartDashboard.putData("Flywheel Power", flywheelPowerSetter);
 
     bl.follow(fl);
     br.follow(fr);
     fr.setInverted(true);
     br.setInverted(true);
     shooterRight.follow(shooterLeft, true);
-    fr.setNeutralMode(NeutralMode.Brake);
-    fl.setNeutralMode(NeutralMode.Brake);
-    bl.setNeutralMode(NeutralMode.Brake);
-    br.setNeutralMode(NeutralMode.Brake);
+    fr.setNeutralMode(NeutralMode.Coast);
+    fl.setNeutralMode(NeutralMode.Coast);
+    bl.setNeutralMode(NeutralMode.Coast);
+    br.setNeutralMode(NeutralMode.Coast);
     // shooterRight.setInverted(true);
     shooterRight.setIdleMode(IdleMode.kCoast);
     shooterLeft.setIdleMode(IdleMode.kCoast);
@@ -137,12 +154,15 @@ public class Robot extends TimedRobot {
     CameraServer.startAutomaticCapture(0);
     CameraServer.startAutomaticCapture(1);
 
-     shooterPID.setP(kP);
-     shooterPID.setI(kI);
-     shooterPID.setD(kD);
-    //shooterPID.setIZone(kIz);
+    // shooterPID = shooterRight.getPIDController();
+    // shooterEncoder = shooterRight.getEncoder();
+
+    // shooterPID.setP(kP);
+    // shooterPID.setI(kI);
+    // shooterPID.setD(kD);
+    // shooterPID.setIZone(kIz);
     // shooterPID.setFF(kFF);
-     shooterPID.setIntegratorRange(0, kIz);
+    // shooterPID.setOutputRange(kMinOutput, kMaxOutput);
     
   }
 
@@ -162,6 +182,9 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("BR Temp", br.getTemperature());
     SmartDashboard.putNumber("FL Temp", fl.getTemperature());
     SmartDashboard.putNumber("BL Temp", bl.getTemperature());
+
+    dashFlySpeed = SmartDashboard.getNumber("fly speed", 0.55);
+    SmartDashboard.putNumber("fly speed", dashFlySpeed);
 
     // SmartDashboard.putNumber("P Gain", kP);
     // SmartDashboard.putNumber("I Gain", kI);
@@ -290,6 +313,61 @@ public class Robot extends TimedRobot {
           intake.set(false);
         }
         break;
+        case kCloseAuto4:
+          if (autoTimer.get()<2){
+            setFlywheel(0.55);
+          }
+          else if (autoTimer.get()<4){
+            shoot();
+          }
+          else if (autoTimer.get() < 8){
+            setFlywheel(0);
+            intake.set(true);
+            intakeRoller.set(-0.67);
+            drive.arcadeDrive(-0.75, 0);
+          }
+          else if (autoTimer.get()<15){
+            drive.arcadeDrive(0,0);
+            intakeRoller.set(0);
+            intake.set(false);
+          }
+        break;
+        case kCloseAuto5:
+          if (autoTimer.get() < 2){
+            drive.arcadeDrive(-0.7, 0);
+          }
+          else if (autoTimer.get()<2.1){
+            drive.arcadeDrive(0,0);
+          }
+          else if (autoTimer.get()<2.6){
+            drive.arcadeDrive(0, -0.8);
+          }
+          else if (autoTimer.get()<4.5){
+            shifter.set(false);
+            intake.set(true);
+            intakeRoller.set(-0.67);
+            drive.arcadeDrive(-0.8, 0);
+          }
+          else if (autoTimer.get()<5.1){
+            setFlywheel(0.55);
+            drive.arcadeDrive(0, 0.7);
+          }
+          else if (autoTimer.get()<5.5){
+            drive.arcadeDrive(0.8,0);
+          }
+          else if (autoTimer.get()<8){
+            intakeRoller.set(0);
+            intake.set(false);
+            drive.arcadeDrive(0, 0);
+            shoot();
+          }
+          // else if (autoTimer.get()<7){
+          //   shoot();
+          // }
+        break;
+        case kCloseAuto6:
+            
+        break;
       }
     }
 
@@ -308,21 +386,22 @@ public class Robot extends TimedRobot {
   /** This function is called periodically during operator control. */
   @Override
   public void teleopPeriodic() {
-     double p = SmartDashboard.getNumber("P Gain", 0);
-     double i = SmartDashboard.getNumber("I Gain", 0);
-     double d = SmartDashboard.getNumber("D Gain", 0);
-     double iz = SmartDashboard.getNumber("I Zone", 0);
+    // double p = SmartDashboard.getNumber("P Gain", 0);
+    // double i = SmartDashboard.getNumber("I Gain", 0);
+    // double d = SmartDashboard.getNumber("D Gain", 0);
+    // double iz = SmartDashboard.getNumber("I Zone", 0);
     // double ff = SmartDashboard.getNumber("Feed Forward", 0);
-     double max = SmartDashboard.getNumber("Max Output", 0);
-     double min = SmartDashboard.getNumber("Min Output", 0);
+    // double max = SmartDashboard.getNumber("Max Output", 0);
+    // double min = SmartDashboard.getNumber("Min Output", 0);
 
-     if((p != kP)) { shooterPID.setP(p); kP = p; }
-     if((i != kI)) { shooterPID.setI(i); kI = i; }
-     if((d != kD)) { shooterPID.setD(d); kD = d; }
-     if((iz != kIz)) { shooterPID.setIZone(iz); kIz = iz; }
+    // if((p != kP)) { shooterPID.setP(p); kP = p; }
+    // if((i != kI)) { shooterPID.setI(i); kI = i; }
+    // if((d != kD)) { shooterPID.setD(d); kD = d; }
+    // if((iz != kIz)) { shooterPID.setIZone(iz); kIz = iz; }
     // if((ff != kFF)) { shooterPID.setFF(ff); kFF = ff; }
-     if((max != kMaxOutput) || (min != kMinOutput)) {  
-       kMinOutput = min; kMaxOutput = max; 
+    // if((max != kMaxOutput) || (min != kMinOutput)) { 
+    //   shooterPID.setOutputRange(min, max); 
+    //   kMinOutput = min; kMaxOutput = max; 
     //}
     maxClimbDownPower=climbPowerSetter.getSelected() * -1;
     //bl.set(-0.5);
@@ -337,14 +416,9 @@ public class Robot extends TimedRobot {
     drive.arcadeDrive(xbox.getLeftTriggerAxis() - xbox.getRightTriggerAxis(), -xboxLeftX - finetuning);
 
     if (DPad == 0) {intake.set(false); intakeRoller.set(0);}
-    if (DPad == 90){
-      if (intakeRoller.get()<=0) {
-        intakeRoller.set(0.67);
-      }
-      else intakeRoller.set(-0.67);
-    }
-    if (DPad == 180) intake.set(true);
-    if (DPad == 270) intakeRoller.set(0);
+    if (DPad == 90){intakeRoller.set(-0.67);}
+    if (DPad == 180) {intake.set(true); intakeRoller.set(0);}
+    if (DPad == 270) intakeRoller.set(0.67);
 
     xbox.setRumble(RumbleType.kLeftRumble, shooterLeft.get());
 		xbox.setRumble(RumbleType.kRightRumble, shooterRight.get());
@@ -358,7 +432,7 @@ public class Robot extends TimedRobot {
     //    setFlywheel(flywheelSpeed-0.05);
     //    flywheelSpeed = shooterRight.get();
     // }
-    flywheelSpeed = flywheelPowerSetter.getSelected();
+    flywheelSpeed = dashFlySpeed;
     if (xbox.getXButtonPressed()){
       if (!flywheelGoing)
         setFlywheel(flywheelSpeed);
@@ -384,9 +458,11 @@ public class Robot extends TimedRobot {
     }
     if (xbox.getLeftBumperPressed()){
       shifter.set(false);
+    }
+    if(xbox.getStartButtonPressed()){
       climbPiston.set(Value.kForward);
     }
-    if (xbox.getRightStickButtonPressed()){
+    else if (xbox.getBackButtonPressed()){
       climbPiston.set(Value.kReverse);
     }
 
@@ -462,7 +538,7 @@ public class Robot extends TimedRobot {
   */
 
   void setClimbPower2(double power){
-    if (climbBottom.getMotorTemperature() < 40 && climbTop.getMotorTemperature() < 40){
+    if (climbBottom.getMotorTemperature() < 75 && climbTop.getMotorTemperature() < 75){
     climbTop.set(power);
     climbBottom.set(power);
     }
@@ -471,5 +547,38 @@ public class Robot extends TimedRobot {
       climbTop.set(0);
     }
   }
-}
 
+  void setAngle(double angle){
+    setRobotPose();
+  }
+
+  double getAngle(){
+    return scaleAngle(((getLeftDriveTicks() - getRightDriveTicks()) / ticksPerDegree) + angleOffset);
+  }
+
+  double getRawAngle(){
+    return scaleAngle((getLeftDriveTicks() - getRightDriveTicks()) / ticksPerDegree);
+  }
+
+  double scaleAngle(double rawAngle){
+    rawAngle = rawAngle % 360;
+    return (rawAngle < 0) ? rawAngle + 360 : rawAngle;
+  }
+
+  double getRightDriveTicks(){
+    return (fr.getSelectedSensorPosition() + br.getSelectedSensorPosition()) / 2;
+  }
+
+  double getLeftDriveTicks(){
+    return (fr.getSelectedSensorPosition() + br.getSelectedSensorPosition()) / 2;
+  }
+
+  void setRobotPose(Pose2d setPose){
+    robotPose = setPose;
+    double angle = setPose.getRotation().getDegrees();
+    //TODO reset drive encoders
+
+    m_odometry.resetPosition(robotPose, Rotation2d.fromDegrees(angle));
+    angleOffset = angle;
+  }
+}
