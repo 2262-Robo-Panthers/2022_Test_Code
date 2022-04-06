@@ -1,19 +1,28 @@
 package frc.robot;
 
+import java.util.List;
+
 import com.ctre.phoenix.motorcontrol.NeutralMode;
 import com.ctre.phoenix.motorcontrol.can.WPI_TalonFX;
 import com.ctre.phoenix.motorcontrol.can.WPI_VictorSPX;
 import com.revrobotics.CANSparkMax;
 import com.revrobotics.RelativeEncoder;
 import com.revrobotics.SparkMaxPIDController;
-import com.revrobotics.CANPIDController.AccelStrategy;
 import com.revrobotics.CANSparkMax.IdleMode;
 import com.revrobotics.CANSparkMaxLowLevel.MotorType;
 
 import edu.wpi.first.cameraserver.CameraServer;
+import edu.wpi.first.math.controller.RamseteController;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.geometry.Translation2d;
+import edu.wpi.first.math.kinematics.ChassisSpeeds;
+import edu.wpi.first.math.kinematics.DifferentialDriveKinematics;
 import edu.wpi.first.math.kinematics.DifferentialDriveOdometry;
+import edu.wpi.first.math.kinematics.DifferentialDriveWheelSpeeds;
+import edu.wpi.first.math.trajectory.TrajectoryConfig;
+import edu.wpi.first.math.trajectory.TrajectoryGenerator;
+import edu.wpi.first.math.util.Units;
 import edu.wpi.first.wpilibj.Compressor;
 import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.DoubleSolenoid;
@@ -25,6 +34,8 @@ import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj.DoubleSolenoid.Value;
 import edu.wpi.first.wpilibj.GenericHID.RumbleType;
 import edu.wpi.first.wpilibj.drive.DifferentialDrive;
+import edu.wpi.first.wpilibj.motorcontrol.MotorControllerGroup;
+import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
@@ -33,18 +44,24 @@ public class Robot extends TimedRobot {
   private final WPI_TalonFX bl = new WPI_TalonFX(1);
   private final WPI_TalonFX fr = new WPI_TalonFX(2);
   private final WPI_TalonFX fl = new WPI_TalonFX(0);
-  private final DifferentialDrive drive = new DifferentialDrive(fl, fr);
+  // private final MotorControllerGroup rightDrive = new MotorControllerGroup(fr, br);
+  // private final MotorControllerGroup leftDrive = new MotorControllerGroup(fl, bl);
+  //private final DifferentialDrive drive = new DifferentialDrive(leftDrive, rightDrive);
+  private final DifferentialDrive drive = new DifferentialDrive(bl,br);
 
   private final CANSparkMax shooterLeft = new CANSparkMax(5,MotorType.kBrushless);
   private final CANSparkMax shooterRight = new CANSparkMax(6,MotorType.kBrushless);
   private final CANSparkMax climbTop = new CANSparkMax(7,MotorType.kBrushless);
   private final CANSparkMax climbBottom = new CANSparkMax(8,MotorType.kBrushless);
+  private final CANSparkMax indexer = new CANSparkMax(12, MotorType.kBrushless);
   private final WPI_VictorSPX intakeRoller = new WPI_VictorSPX(9);
 
   private final Compressor PCM = new Compressor(11, PneumaticsModuleType.CTREPCM);
   private final Solenoid intake = new Solenoid(11, PneumaticsModuleType.CTREPCM, 4);
   private final Solenoid stopper = new Solenoid(11, PneumaticsModuleType.CTREPCM, 5);
   private final Solenoid shifter = new Solenoid(11, PneumaticsModuleType.CTREPCM, 6);
+  private final Solenoid fanRight = new Solenoid(11,PneumaticsModuleType.CTREPCM, 7);
+  private final Solenoid fanLeft = new Solenoid(11, PneumaticsModuleType.CTREPCM, 1);
   private final DoubleSolenoid climbPiston = new DoubleSolenoid(11,PneumaticsModuleType.CTREPCM,3,2);
 
   private final DigitalInput shootPhotoGate = new DigitalInput(0);
@@ -63,7 +80,8 @@ public class Robot extends TimedRobot {
   private static final String kCloseAuto3 = "Close Auto Defense";
   private static final String kCloseAuto4 = "Close Auto 1 Ball High";
   private static final String kCloseAuto5 = "Close Auto 4 Ball High";
-  private static final String kCloseAuto6 = "Close Auto 4 Ball High OD";
+  private static final String kCloseAuto6 = "Close Auto 4 Ball High Trajectory";
+  private static final String kDoesNothing = "Does Nothing";
   private String m_autoSelected;
   private final SendableChooser<String> m_chooser = new SendableChooser<>();
   private static final Double k38 = 0.375;
@@ -90,6 +108,8 @@ public class Robot extends TimedRobot {
   double maxClimbUpPower = 0.65;
   double maxClimbDownPower = -0.5;
 
+  double maxDriveTemp = 40.0;
+
   // double kP = 6e-5; 
   // double kI = 0;
   // double kD = 0; 
@@ -102,16 +122,34 @@ public class Robot extends TimedRobot {
 
   private double dashFlySpeed;
 
+  private TrajectoryConfig trajectoryConfig = new TrajectoryConfig(5, 2);
+  private DifferentialDriveKinematics kinematics = new DifferentialDriveKinematics(Units.inchesToMeters(21.43));
+  private Field2d m_field = new Field2d();
+  private RamseteController ramsete = new RamseteController();
+  
+
+  private int queuedShots = 0;
+  private boolean isShooting = false;
+
   //do not edit
   //double climbSetPos = 0;
 
   //position tracking
+<<<<<<< Updated upstream
   private double ticksPerDegree = 18.93;
   private Pose2d startPose2d = new Pose2d(0,0, Rotation2d.fromDegrees(0));
   //do not edit
   private Rotation2d angleOffset;
   private Pose2d robotPose = new Pose2d();
   private Rotation2d angle;
+=======
+  public static final int kEncoderCPR = 2048;
+  public static final double kGearRatio = 20.8333;
+  //public static final double kGearRatio = 9.167;
+  public static final double kWheelDiameterMeters = Units.inchesToMeters(4);
+  public static final double kEncoderDistancePerPulse =
+        ((kWheelDiameterMeters * Math.PI) / (double) kEncoderCPR / (double) kGearRatio);
+>>>>>>> Stashed changes
 
 
   @Override
@@ -124,7 +162,8 @@ public class Robot extends TimedRobot {
     m_chooser.addOption("Close Auto Defense L", kCloseAuto3);
     m_chooser.addOption("High Auto 1 Ball H", kCloseAuto4);
     m_chooser.addOption("4 Ball Auto H", kCloseAuto5);
-    m_chooser.addOption("4 Ball Auto H OD", kCloseAuto6);
+    m_chooser.addOption("4 Ball Auto H Trajectory", kCloseAuto6);
+    m_chooser.addOption("Does Nothing", kDoesNothing);
     SmartDashboard.putData("Auto choices", m_chooser);
     climbPowerSetter.setDefaultOption("50%", k50);
     climbPowerSetter.addOption("65%", k65);
@@ -138,8 +177,8 @@ public class Robot extends TimedRobot {
     flywheelPowerSetter.addOption("80%", k80);
     flywheelPowerSetter.setDefaultOption("100%", k100);
     SmartDashboard.putData("Flywheel Power", flywheelPowerSetter);
-    bl.follow(fl);
-    br.follow(fr);
+    fl.follow(bl);
+    fr.follow(br);
     fr.setInverted(true);
     br.setInverted(true);
     shooterRight.follow(shooterLeft, true);
@@ -152,6 +191,7 @@ public class Robot extends TimedRobot {
     shooterLeft.setIdleMode(IdleMode.kCoast);
     climbTop.setIdleMode(IdleMode.kBrake);
     climbBottom.setIdleMode(IdleMode.kBrake);
+    indexer.setIdleMode(IdleMode.kBrake);
     //climbSetPos = getClimbPos();
     CameraServer.startAutomaticCapture(0);
     CameraServer.startAutomaticCapture(1);
@@ -187,9 +227,16 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("FL Temp", fl.getTemperature());
     SmartDashboard.putNumber("BL Temp", bl.getTemperature());
     SmartDashboard.putNumber("FL Encoder", fl.getSelectedSensorPosition());
+<<<<<<< Updated upstream
     SmartDashboard.putString("robot pose", robotPose.toString());
+=======
+    SmartDashboard.putNumber("Fr Power", fr.get());
+    SmartDashboard.putNumber("Br Power", br.get());
+    SmartDashboard.putNumber("Indexer Temp", indexer.getMotorTemperature());
+    SmartDashboard.putData("Field", m_field);
+>>>>>>> Stashed changes
 
-    dashFlySpeed = SmartDashboard.getNumber("fly speed", 0.55);
+    dashFlySpeed = SmartDashboard.getNumber("fly speed", 0.6);
     SmartDashboard.putNumber("fly speed", dashFlySpeed);
 
     // SmartDashboard.putNumber("P Gain", kP);
@@ -215,6 +262,15 @@ public class Robot extends TimedRobot {
     stopFlywheel();
     shifter.set(false);
     intakeRoller.set(0);
+    indexer.set(0);
+    var chassisSpeeds = new ChassisSpeeds(2.0, 0.0, 1.0);
+    DifferentialDriveWheelSpeeds wheelSpeeds = kinematics.toWheelSpeeds(chassisSpeeds);
+    double leftVelocity = wheelSpeeds.leftMetersPerSecond;
+    double rightVelocity = wheelSpeeds.rightMetersPerSecond;
+    double linearVelocity = chassisSpeeds.vxMetersPerSecond;
+    double angularVelocity = chassisSpeeds.omegaRadiansPerSecond;
+    //2,125,000 ticks per foot
+    trajectoryConfig.setKinematics(kinematics);
   }
 
   @Override
@@ -327,7 +383,7 @@ public class Robot extends TimedRobot {
         break;
         case kCloseAuto4:
           if (autoTimer.get()<2){
-            setFlywheel(0.55);
+            setFlywheel(0.57);
           }
           else if (autoTimer.get()<4){
             shoot();
@@ -353,40 +409,47 @@ public class Robot extends TimedRobot {
         if (autoTimer.get()<4){
           intake.set(true);
           intakeRoller.set(-0.67);
-          drive.arcadeDrive(-0.8, -0.43);
+          drive.arcadeDrive(-0.8, -0.475);
         }
         else if (autoTimer.get()<5.75){
           //intake.set(false);
           //intakeRoller.set(0);
           setFlywheel(0.575);
-          drive.arcadeDrive(0.9, 0.62);
+          drive.arcadeDrive(0.9, 0.65);
         }
-        else if (autoTimer.get()<8.5){
-          stopper.set(true);
-        }
-        else if (autoTimer.get()<10) {
-          shifter.set(true);
-          stopFlywheel();
-          intakeRoller.set(-0.67);
-          drive.arcadeDrive(-0.9, -0.355);
-          stopper.set(false);
-        }
-        else if (autoTimer.get()<11){
-          shifter.set(false);
-          drive.arcadeDrive(-0.5, 0);
-        }
-        else if (autoTimer.get()<11.75){
-          drive.arcadeDrive(0, 0);
-          shifter.set(true);
-        }
-        else if (autoTimer.get()<13.5){
-          drive.arcadeDrive(0.9, 0.38);
-          setFlywheel(0.55);
-        }
-        else if (autoTimer.get()<14){
-          shifter.set(false);
+        else if (autoTimer.get()<6.5){
           drive.arcadeDrive(0.7, 0);
         }
+        else if (autoTimer.get()<8.5){
+          drive.arcadeDrive(0, 0);
+          stopper.set(true);
+        }
+        else if (autoTimer.get()<10){
+          drive.arcadeDrive(-0.7, 0);
+        }
+        // else if (autoTimer.get()<10) {
+        //   shifter.set(true);
+        //   stopFlywheel();
+        //   intakeRoller.set(-0.67);
+        //   drive.arcadeDrive(-0.9, -0.425);
+        //   stopper.set(false);
+        // }
+        // else if (autoTimer.get()<11){
+        //   shifter.set(false);
+        //   drive.arcadeDrive(-0.5, 0);
+        // }
+        // else if (autoTimer.get()<11.75){
+        //   drive.arcadeDrive(0, 0);
+        //   shifter.set(true);
+        // }
+        // else if (autoTimer.get()<13.5){
+        //   drive.arcadeDrive(0.9, 0.3);
+        //   setFlywheel(0.55);
+        // }
+        // else if (autoTimer.get()<14){
+        //   shifter.set(false);
+        //   drive.arcadeDrive(0.7, 0);
+        // }
         else {
           stopper.set(true);
           drive.arcadeDrive(0, 0);
@@ -394,10 +457,16 @@ public class Robot extends TimedRobot {
         break;
         //1 foot is 19.89 rotations and 40744 ticks
         case kCloseAuto6:
-            if ((fr.getSelectedSensorPosition()+fl.getSelectedSensorPosition())/2 > -100000){
-              drive.arcadeDrive(-0.7, 0);
-            }
-            //else if ((fr.getSelectedSensorPosition()+fl.getSelectedSensorPosition())/2
+        var trajectoryOne =
+        TrajectoryGenerator.generateTrajectory(
+          new Pose2d(0,0,Rotation2d.fromDegrees(90)),
+          List.of(new Translation2d(6,6)),
+          new Pose2d(3,0,Rotation2d.fromDegrees(0)),
+          trajectoryConfig);
+        m_field.getObject("traj").setTrajectory(trajectoryOne);
+        m_field.setRobotPose(trajectoryOne.getInitialPose());
+        break;
+        case kDoesNothing:
         break;
       }
     }
@@ -417,6 +486,7 @@ public class Robot extends TimedRobot {
   /** This function is called periodically during operator control. */
   @Override
   public void teleopPeriodic() {
+    runShoot();
     // double p = SmartDashboard.getNumber("P Gain", 0);
     // double i = SmartDashboard.getNumber("I Gain", 0);
     // double d = SmartDashboard.getNumber("D Gain", 0);
@@ -472,7 +542,9 @@ public class Robot extends TimedRobot {
     }
 
     if (xbox.getAButtonPressed()){
-      shoot();
+      newShoot();
+    } else if(xbox.getRightStickButtonPressed()){
+      newShoot2();
     }
 
     if (xbox.getBButton()){
@@ -497,7 +569,26 @@ public class Robot extends TimedRobot {
       climbPiston.set(Value.kReverse);
     }
 
-    if (!shootPhotoGate.get()) stopper.set(false);
+    if (fr.getTemperature()>maxDriveTemp||br.getTemperature()>maxDriveTemp){
+       fanRight.set(true);
+    }
+    else fanRight.set(false);
+    
+    if (fl.getTemperature()>maxDriveTemp||bl.getTemperature()>maxDriveTemp){
+       fanLeft.set(true);
+    }
+    // else fanLeft.set(false);
+    // if (indexer.getMotorTemperature()>45||shootPhotoGate.get()&&!stopper.get()) {
+    //   indexer.set(0);
+    // }
+    // else {indexer.set(-0.75);}
+
+    if ((indexer.getMotorTemperature()<45&&stopper.get())||(indexer.getMotorTemperature()<45&&!shootPhotoGate.get())){
+      indexer.set(-1);
+    }
+    else {
+      indexer.set(0);
+    }
 
     //runClimb();
   }
@@ -521,52 +612,17 @@ public class Robot extends TimedRobot {
     //shooterRight.set(0);
     flywheelGoing=false;
   }
-  /*
-  public void climbUp(){
-    climbTop.set(0.5);
-    climbBottom.set(0.5);
-  }
-  public void climbDown(){
-    climbTop.set(-1);
-    climbBottom.set(-1);
-  }
-  public void climbStop(){
-    climbTop.set(0);
-    climbBottom.set(0);
-  }
-  */
+
   public void shoot(){
     if (shootPhotoGate.get()&&flywheelGoing){
       stopper.set(true);
+      //indexer.set(-0.75);
       if (!shootPhotoGate.get()){
         stopper.set(false);
+        //indexer.set(0);
       }
     }
   }
-  /*
-  void setClimb(double pos){
-    climbSetPos = Math.max(minClimbPos, Math.min(maxClimbPos, pos));
-  }
-  void moveClimb(double amount){
-    setClimb(getClimbPos() + amount);
-  }
-  double getClimbPos(){
-    return (climbTop.getEncoder().getPosition() + climbBottom.getEncoder().getPosition()) / 2.0;
-  }
-  void setClimbPower(double power){
-    double pow = Math.max(maxClimbDownPower, Math.min(maxClimbUpPower, power));
-    climbTop.set(pow);
-    climbBottom.set(pow);
-  }
-  void runClimb(){
-    double error = climbSetPos - getClimbPos();
-    if(Math.abs(error) > climbPosTol){ 
-      setClimbPower(error * climbProportional);
-    }else{
-      setClimbPower(0);
-    }
-  }
-  */
 
   void setClimbPower2(double power){
     if (climbBottom.getMotorTemperature() < 75 && climbTop.getMotorTemperature() < 75){
@@ -628,4 +684,41 @@ public class Robot extends TimedRobot {
       angle = getAngle(leftDrivePos, rightDrivePos);
       robotPose = m_odometry.update(angle, leftDrivePos, rightDrivePos);
   }
+
+  void newShoot(){
+    queuedShots = 1;
+  }
+
+  void newShoot2(){
+    queuedShots = 2;
+  }
+
+  void runShoot(){
+    if(queuedShots == 0){
+      stopper.set(false);
+      return;
+    }
+
+    if(!isShooting && shootPhotoGate.get()){
+      if(flywheelGoing){
+        stopper.set(true);
+        isShooting = true;
+        return;
+      }
+      queuedShots = 0;
+      return;
+    }
+
+    if(isShooting && !shootPhotoGate.get()){
+      stopper.set(false);
+      isShooting = false;
+      queuedShots--;
+    }
+  }
+  // public void generateTrajectory() {
+  //   var sideStart = new Pose2d(Units.feetToMeters(1.54), Units.feetToMeters(23.23),
+  //     Rotation2d.fromDegrees(-180));
+  //   var crossScale = new Pose2d(Units.feetToMeters(23.7), Units.feetToMeters(6.8),
+  //     Rotation2d.fromDegrees(-160));
+  // }
 }
