@@ -109,13 +109,15 @@ public class Robot extends TimedRobot {
   private double ticksPerDegree = 18.93;
   private Pose2d startPose2d = new Pose2d(0,0, Rotation2d.fromDegrees(0));
   //do not edit
-  private double angle = 0;
-  private double angleOffset = 0;
+  private Rotation2d angleOffset;
   private Pose2d robotPose = new Pose2d();
+  private Rotation2d angle;
 
 
   @Override
   public void robotInit() {
+    setRobotPose(startPose2d);
+    
     m_chooser.setDefaultOption("Far Auto L", kDefaultAuto);
     m_chooser.addOption("Close Auto 1 Ball L", kCloseAuto);
     m_chooser.addOption("Close Auto 2 Ball L", kCloseAuto2);
@@ -168,6 +170,8 @@ public class Robot extends TimedRobot {
 
   @Override
   public void robotPeriodic() {
+    updateRobotPose();
+
     SmartDashboard.putNumber("Left Neo RPM", shooterLeft.getEncoder().getVelocity());
     SmartDashboard.putNumber("Right Neo RPM", shooterRight.getEncoder().getVelocity());
     SmartDashboard.putNumber("FlywheelRPM", ((shooterRight.getEncoder().getVelocity()+shooterLeft.getEncoder().getVelocity())/2)*1.25);
@@ -183,6 +187,7 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("FL Temp", fl.getTemperature());
     SmartDashboard.putNumber("BL Temp", bl.getTemperature());
     SmartDashboard.putNumber("FL Encoder", fl.getSelectedSensorPosition());
+    SmartDashboard.putString("robot pose", robotPose.toString());
 
     dashFlySpeed = SmartDashboard.getNumber("fly speed", 0.55);
     SmartDashboard.putNumber("fly speed", dashFlySpeed);
@@ -573,6 +578,54 @@ public class Robot extends TimedRobot {
       climbTop.set(0);
     }
   }
-  void moveFeetForward(double distance){
+
+  void setAngle(Rotation2d angle){
+    setRobotPose(new Pose2d(robotPose.getX(), robotPose.getY(), angle));
+  }
+
+  double getAngleAsDegree(double leftDistance, double rightDistance){
+    return scaleAngle(((leftDistance - rightDistance) / ticksPerDegree) + angleOffset.getDegrees());
+  }
+
+  Rotation2d getAngle(double leftDistance, double rightDistance){
+    return Rotation2d.fromDegrees(getAngleAsDegree(leftDistance, rightDistance));
+  }
+
+  double scaleAngle(double rawAngle){
+    rawAngle = rawAngle % 360;
+    return (rawAngle < 0) ? rawAngle + 360 : rawAngle;
+  }
+
+  double getRightDriveTicks(){
+    return (fr.getSelectedSensorPosition() + br.getSelectedSensorPosition()) / 2;
+  }
+
+  double getLeftDriveTicks(){
+    return (fr.getSelectedSensorPosition() + br.getSelectedSensorPosition()) / 2;
+  }
+
+  void setRobotPose(Pose2d setPose){
+    angle = setPose.getRotation();
+
+    resetDriveEncoders();
+    m_odometry.resetPosition(robotPose, angle);
+
+    angleOffset = angle;
+    robotPose = setPose;
+  }
+
+  void resetDriveEncoders(){
+    fl.setSelectedSensorPosition(0);
+    fr.setSelectedSensorPosition(0);
+    bl.setSelectedSensorPosition(0);
+    br.setSelectedSensorPosition(0);
+  }
+
+  void updateRobotPose(){
+      double leftDrivePos = getLeftDriveTicks();
+      double rightDrivePos = getRightDriveTicks();
+      
+      angle = getAngle(leftDrivePos, rightDrivePos);
+      robotPose = m_odometry.update(angle, leftDrivePos, rightDrivePos);
   }
 }
