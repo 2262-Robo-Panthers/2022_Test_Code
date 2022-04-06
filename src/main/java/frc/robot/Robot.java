@@ -6,6 +6,7 @@ import com.ctre.phoenix.motorcontrol.can.WPI_VictorSPX;
 import com.revrobotics.CANSparkMax;
 import com.revrobotics.RelativeEncoder;
 import com.revrobotics.SparkMaxPIDController;
+import com.revrobotics.CANPIDController.AccelStrategy;
 import com.revrobotics.CANSparkMax.IdleMode;
 import com.revrobotics.CANSparkMaxLowLevel.MotorType;
 
@@ -135,7 +136,6 @@ public class Robot extends TimedRobot {
     flywheelPowerSetter.addOption("80%", k80);
     flywheelPowerSetter.setDefaultOption("100%", k100);
     SmartDashboard.putData("Flywheel Power", flywheelPowerSetter);
-
     bl.follow(fl);
     br.follow(fr);
     fr.setInverted(true);
@@ -182,6 +182,7 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("BR Temp", br.getTemperature());
     SmartDashboard.putNumber("FL Temp", fl.getTemperature());
     SmartDashboard.putNumber("BL Temp", bl.getTemperature());
+    SmartDashboard.putNumber("FL Encoder", fl.getSelectedSensorPosition());
 
     dashFlySpeed = SmartDashboard.getNumber("fly speed", 0.55);
     SmartDashboard.putNumber("fly speed", dashFlySpeed);
@@ -203,6 +204,12 @@ public class Robot extends TimedRobot {
     autoTimer.reset();
     autoTimer.start();
     shifter.set(false);
+    fr.setSelectedSensorPosition(0);
+    fl.setSelectedSensorPosition(0);
+    intakeRoller.set(0);
+    stopFlywheel();
+    shifter.set(false);
+    intakeRoller.set(0);
   }
 
   @Override
@@ -333,40 +340,59 @@ public class Robot extends TimedRobot {
           }
         break;
         case kCloseAuto5:
-          if (autoTimer.get() < 2){
-            drive.arcadeDrive(-0.7, 0);
-          }
-          else if (autoTimer.get()<2.1){
-            drive.arcadeDrive(0,0);
-          }
-          else if (autoTimer.get()<2.6){
-            drive.arcadeDrive(0, -0.8);
-          }
-          else if (autoTimer.get()<4.5){
-            shifter.set(false);
-            intake.set(true);
-            intakeRoller.set(-0.67);
-            drive.arcadeDrive(-0.8, 0);
-          }
-          else if (autoTimer.get()<5.1){
-            setFlywheel(0.55);
-            drive.arcadeDrive(0, 0.7);
-          }
-          else if (autoTimer.get()<5.5){
-            drive.arcadeDrive(0.8,0);
-          }
-          else if (autoTimer.get()<8){
-            intakeRoller.set(0);
-            intake.set(false);
-            drive.arcadeDrive(0, 0);
-            shoot();
-          }
-          // else if (autoTimer.get()<7){
-          //   shoot();
-          // }
+        // if (autoTimer.get()<3) {
+        //   intake.set(true);
+        //   intakeRoller.set(-0.67);
+        //   drive.arcadeDrive(0.9, -0.3);
+        // }
+        if (autoTimer.get()<4){
+          intake.set(true);
+          intakeRoller.set(-0.67);
+          drive.arcadeDrive(-0.8, -0.43);
+        }
+        else if (autoTimer.get()<5.75){
+          //intake.set(false);
+          //intakeRoller.set(0);
+          setFlywheel(0.575);
+          drive.arcadeDrive(0.9, 0.62);
+        }
+        else if (autoTimer.get()<8.5){
+          stopper.set(true);
+        }
+        else if (autoTimer.get()<10) {
+          shifter.set(true);
+          stopFlywheel();
+          intakeRoller.set(-0.67);
+          drive.arcadeDrive(-0.9, -0.355);
+          stopper.set(false);
+        }
+        else if (autoTimer.get()<11){
+          shifter.set(false);
+          drive.arcadeDrive(-0.5, 0);
+        }
+        else if (autoTimer.get()<11.75){
+          drive.arcadeDrive(0, 0);
+          shifter.set(true);
+        }
+        else if (autoTimer.get()<13.5){
+          drive.arcadeDrive(0.9, 0.38);
+          setFlywheel(0.55);
+        }
+        else if (autoTimer.get()<14){
+          shifter.set(false);
+          drive.arcadeDrive(0.7, 0);
+        }
+        else {
+          stopper.set(true);
+          drive.arcadeDrive(0, 0);
+        }
         break;
+        //1 foot is 19.89 rotations and 40744 ticks
         case kCloseAuto6:
-            
+            if ((fr.getSelectedSensorPosition()+fl.getSelectedSensorPosition())/2 > -100000){
+              drive.arcadeDrive(-0.7, 0);
+            }
+            //else if ((fr.getSelectedSensorPosition()+fl.getSelectedSensorPosition())/2
         break;
       }
     }
@@ -547,38 +573,6 @@ public class Robot extends TimedRobot {
       climbTop.set(0);
     }
   }
-
-  void setAngle(double angle){
-    setRobotPose();
-  }
-
-  double getAngle(){
-    return scaleAngle(((getLeftDriveTicks() - getRightDriveTicks()) / ticksPerDegree) + angleOffset);
-  }
-
-  double getRawAngle(){
-    return scaleAngle((getLeftDriveTicks() - getRightDriveTicks()) / ticksPerDegree);
-  }
-
-  double scaleAngle(double rawAngle){
-    rawAngle = rawAngle % 360;
-    return (rawAngle < 0) ? rawAngle + 360 : rawAngle;
-  }
-
-  double getRightDriveTicks(){
-    return (fr.getSelectedSensorPosition() + br.getSelectedSensorPosition()) / 2;
-  }
-
-  double getLeftDriveTicks(){
-    return (fr.getSelectedSensorPosition() + br.getSelectedSensorPosition()) / 2;
-  }
-
-  void setRobotPose(Pose2d setPose){
-    robotPose = setPose;
-    double angle = setPose.getRotation().getDegrees();
-    //TODO reset drive encoders
-
-    m_odometry.resetPosition(robotPose, Rotation2d.fromDegrees(angle));
-    angleOffset = angle;
+  void moveFeetForward(double distance){
   }
 }
