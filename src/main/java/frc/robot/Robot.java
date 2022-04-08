@@ -23,6 +23,7 @@ import edu.wpi.first.math.kinematics.DifferentialDriveWheelSpeeds;
 import edu.wpi.first.math.trajectory.TrajectoryConfig;
 import edu.wpi.first.math.trajectory.TrajectoryGenerator;
 import edu.wpi.first.math.util.Units;
+import edu.wpi.first.wpilibj.ADIS16470_IMU;
 import edu.wpi.first.wpilibj.Compressor;
 import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.DoubleSolenoid;
@@ -34,6 +35,7 @@ import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj.DoubleSolenoid.Value;
 import edu.wpi.first.wpilibj.GenericHID.RumbleType;
 import edu.wpi.first.wpilibj.drive.DifferentialDrive;
+import edu.wpi.first.wpilibj.interfaces.Gyro;
 import edu.wpi.first.wpilibj.motorcontrol.MotorControllerGroup;
 import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
@@ -82,6 +84,7 @@ public class Robot extends TimedRobot {
   private static final String kCloseAuto5 = "Close Auto 4 Ball High";
   private static final String kCloseAuto6 = "Close Auto 4 Ball High Trajectory";
   private static final String kDoesNothing = "Does Nothing";
+  private static final String k3BallAuto = "3 Ball Auto";
   private String m_autoSelected;
   private final SendableChooser<String> m_chooser = new SendableChooser<>();
   private static final Double k38 = 0.375;
@@ -96,8 +99,6 @@ public class Robot extends TimedRobot {
 
   private double flywheelSpeed = 0;
   private final Timer autoTimer = new Timer();
-
-  DifferentialDriveOdometry m_odometry = new DifferentialDriveOdometry(new Rotation2d(), new Pose2d(0.0,0.0,new Rotation2d()));
 
   //climb
   //double minClimbPos = -1000;
@@ -135,28 +136,35 @@ public class Robot extends TimedRobot {
   //double climbSetPos = 0;
 
   //position tracking
-<<<<<<< Updated upstream
-  private double ticksPerDegree = 18.93;
-  private Pose2d startPose2d = new Pose2d(0,0, Rotation2d.fromDegrees(0));
-  //do not edit
-  private Rotation2d angleOffset;
-  private Pose2d robotPose = new Pose2d();
-  private Rotation2d angle;
-=======
+  //variables
   public static final int kEncoderCPR = 2048;
   public static final double kGearRatio = 20.8333;
   //public static final double kGearRatio = 9.167;
   public static final double kWheelDiameterMeters = Units.inchesToMeters(4);
   public static final double kEncoderDistancePerPulse =
         ((kWheelDiameterMeters * Math.PI) / (double) kEncoderCPR / (double) kGearRatio);
->>>>>>> Stashed changes
+  //other
+  ADIS16470_IMU imu = new ADIS16470_IMU();
+  DifferentialDriveOdometry m_odometry = new DifferentialDriveOdometry(getIMUAngle(), new Pose2d(0.0,0.0,new Rotation2d()));
+  public static Pose2d robotPose2d;
 
+  //move in line
+  private static boolean isMoving;
+  private static boolean isRoataing;
+  private static double moveTolerance;
+  private static int moveTimesInTolerance;
+  private static int moveMaxTimesInTolerance;
+  private static double moveEnd;
+  private static double movekP;
+  private static double moveMaxSpeed;
+
+  //auto
+  private static int autoStep = 0;
 
   @Override
   public void robotInit() {
-    setRobotPose(startPose2d);
-    
-    m_chooser.setDefaultOption("Far Auto L", kDefaultAuto);
+    m_chooser.setDefaultOption("3 Ball Auto", k3BallAuto);
+    m_chooser.addOption("Far Auto L", kDefaultAuto);
     m_chooser.addOption("Close Auto 1 Ball L", kCloseAuto);
     m_chooser.addOption("Close Auto 2 Ball L", kCloseAuto2);
     m_chooser.addOption("Close Auto Defense L", kCloseAuto3);
@@ -211,12 +219,14 @@ public class Robot extends TimedRobot {
   @Override
   public void robotPeriodic() {
     updateRobotPose();
+    runShoot();
+    runIndexer();
+
+    m_field.setRobotPose(m_odometry.getPoseMeters());
 
     SmartDashboard.putNumber("Left Neo RPM", shooterLeft.getEncoder().getVelocity());
     SmartDashboard.putNumber("Right Neo RPM", shooterRight.getEncoder().getVelocity());
     SmartDashboard.putNumber("FlywheelRPM", ((shooterRight.getEncoder().getVelocity()+shooterLeft.getEncoder().getVelocity())/2)*1.25);
-    SmartDashboard.putNumber("FlywheelSet", shooterLeft.get());
-    SmartDashboard.putBoolean("Intake Roller", intakeRoller.get()!=0);
     SmartDashboard.putBoolean("PhotoGate", shootPhotoGate.get());
     SmartDashboard.putNumber("Right Neo Temp", shooterRight.getMotorTemperature());
     SmartDashboard.putNumber("Left Neo Temp", shooterLeft.getMotorTemperature());
@@ -226,15 +236,11 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("BR Temp", br.getTemperature());
     SmartDashboard.putNumber("FL Temp", fl.getTemperature());
     SmartDashboard.putNumber("BL Temp", bl.getTemperature());
-    SmartDashboard.putNumber("FL Encoder", fl.getSelectedSensorPosition());
-<<<<<<< Updated upstream
-    SmartDashboard.putString("robot pose", robotPose.toString());
-=======
-    SmartDashboard.putNumber("Fr Power", fr.get());
-    SmartDashboard.putNumber("Br Power", br.get());
     SmartDashboard.putNumber("Indexer Temp", indexer.getMotorTemperature());
+    SmartDashboard.putNumber("Gyro", imu.getAngle());
     SmartDashboard.putData("Field", m_field);
->>>>>>> Stashed changes
+    SmartDashboard.putNumber("auto step", autoStep);
+    SmartDashboard.putNumber("all distance", getAllDriveDistance());
 
     dashFlySpeed = SmartDashboard.getNumber("fly speed", 0.6);
     SmartDashboard.putNumber("fly speed", dashFlySpeed);
@@ -250,34 +256,32 @@ public class Robot extends TimedRobot {
 
   @Override
   public void autonomousInit() {
+    imu.reset();
     m_autoSelected = m_chooser.getSelected();
     // m_autoSelected = SmartDashboard.getString("Auto Selector", kDefaultAuto);
     System.out.println("Auto selected: " + m_autoSelected);
     autoTimer.reset();
     autoTimer.start();
     shifter.set(false);
-    fr.setSelectedSensorPosition(0);
-    fl.setSelectedSensorPosition(0);
     intakeRoller.set(0);
     stopFlywheel();
     shifter.set(false);
     intakeRoller.set(0);
     indexer.set(0);
-    var chassisSpeeds = new ChassisSpeeds(2.0, 0.0, 1.0);
-    DifferentialDriveWheelSpeeds wheelSpeeds = kinematics.toWheelSpeeds(chassisSpeeds);
-    double leftVelocity = wheelSpeeds.leftMetersPerSecond;
-    double rightVelocity = wheelSpeeds.rightMetersPerSecond;
-    double linearVelocity = chassisSpeeds.vxMetersPerSecond;
-    double angularVelocity = chassisSpeeds.omegaRadiansPerSecond;
+    //var chassisSpeeds = new ChassisSpeeds(2.0, 0.0, 1.0);
+    //DifferentialDriveWheelSpeeds wheelSpeeds = kinematics.toWheelSpeeds(chassisSpeeds);
     //2,125,000 ticks per foot
     trajectoryConfig.setKinematics(kinematics);
+
+    resetDriveEncoders();
+    autoStep = 0;
   }
 
   @Override
   public void autonomousPeriodic() {
     switch (m_autoSelected) {
       case kDefaultAuto:
-      default:
+        default:
         // Put default auto code here
         if (autoTimer.get() < 3){
           drive.arcadeDrive(-0.65, 0);
@@ -307,6 +311,7 @@ public class Robot extends TimedRobot {
         // Put custom auto code here
         if (autoTimer.get() < 3){
           setFlywheel(0.375);
+          intake.set(true);
           drive.arcadeDrive(0, 0);
         }
         else if (autoTimer.get() < 4){
@@ -383,21 +388,33 @@ public class Robot extends TimedRobot {
         break;
         case kCloseAuto4:
           if (autoTimer.get()<2){
-            setFlywheel(0.57);
+            setFlywheel(0.6);
           }
           else if (autoTimer.get()<4){
-            shoot();
+            stopper.set(true);
           }
-          else if (autoTimer.get() < 8){
+          else if (autoTimer.get()<6&&imu.getAngle()>-25){
+            stopper.set(false);
+            drive.arcadeDrive(0, -0.35);
+          }
+          else if (autoTimer.get() < 8.5){
             setFlywheel(0);
             intake.set(true);
             intakeRoller.set(-0.67);
             drive.arcadeDrive(-0.75, 0);
           }
-          else if (autoTimer.get()<15){
-            drive.arcadeDrive(0,0);
+          else if (autoTimer.get()<11){
+            drive.arcadeDrive(0.75,0);
             intakeRoller.set(0);
             intake.set(false);
+          }
+          else if (autoTimer.get()<13.5&&imu.getAngle()<0){
+            drive.arcadeDrive(0, 0.35);
+            setFlywheel(0.6);
+          }
+          else if (autoTimer.get()<15){
+            drive.arcadeDrive(0, 0);
+            stopper.set(false);
           }
         break;
         case kCloseAuto5:
@@ -468,6 +485,68 @@ public class Robot extends TimedRobot {
         break;
         case kDoesNothing:
         break;
+        case k3BallAuto:
+            if(autoStep == 0){
+              setFlywheel(0.6);
+              intake.set(true);
+              setMoveRobotInLine(-0.8, 0.15, 10, 1, 2);
+              autoStep++;
+            }
+            else if(autoStep == 1){
+              if(!isRobotMovingInLine())
+                autoStep++;  
+            }
+            else if(autoStep == 2){
+              newShoot();
+              autoStep++;
+            }
+            else if(autoStep == 3){ 
+              if(queuedShots == 0){
+                setFlywheel(0);
+                autoStep++;
+              }
+            }
+            else if(autoStep == 4){
+              setTurnRobotToAngle(-58, 2, 10, 0.6, 0.1);
+              autoStep++;
+            }
+            else if(autoStep == 5){
+              if(!isRobotRotating())
+                autoStep++;
+            }
+            else if(autoStep == 6){
+              intakeRoller.set(-0.67);
+              setMoveRobotInLine(-6, 0.15, 3, 1, 2);
+              autoStep++;
+            }
+            else if(autoStep == 7){
+              if(!isRobotMovingInLine())
+                autoStep++;
+            }
+            else if(autoStep == 8){
+              intakeRoller.set(0);
+              setFlywheel(0.6);
+              setMoveRobotInLine(5.7, 0.15, 3, 1, 2);
+              autoStep++;
+            }
+            else if(autoStep == 9){
+              if(!isRobotMovingInLine())
+                autoStep++;
+            }
+            else if(autoStep == 10){
+              setTurnRobotToAngle(0, 2, 10, 0.6, 0.1);
+              autoStep++;
+            }
+            else if(autoStep == 11){
+              if(!isRobotRotating())
+                autoStep++;
+            }
+            else if(autoStep == 12){
+              newShoot2();
+              autoStep++;
+            }
+            moveRobot();
+          break;
       }
     }
 
@@ -486,24 +565,7 @@ public class Robot extends TimedRobot {
   /** This function is called periodically during operator control. */
   @Override
   public void teleopPeriodic() {
-    runShoot();
-    // double p = SmartDashboard.getNumber("P Gain", 0);
-    // double i = SmartDashboard.getNumber("I Gain", 0);
-    // double d = SmartDashboard.getNumber("D Gain", 0);
-    // double iz = SmartDashboard.getNumber("I Zone", 0);
-    // double ff = SmartDashboard.getNumber("Feed Forward", 0);
-    // double max = SmartDashboard.getNumber("Max Output", 0);
-    // double min = SmartDashboard.getNumber("Min Output", 0);
-
-    // if((p != kP)) { shooterPID.setP(p); kP = p; }
-    // if((i != kI)) { shooterPID.setI(i); kI = i; }
-    // if((d != kD)) { shooterPID.setD(d); kD = d; }
-    // if((iz != kIz)) { shooterPID.setIZone(iz); kIz = iz; }
-    // if((ff != kFF)) { shooterPID.setFF(ff); kFF = ff; }
-    // if((max != kMaxOutput) || (min != kMinOutput)) { 
-    //   shooterPID.setOutputRange(min, max); 
-    //   kMinOutput = min; kMaxOutput = max; 
-    //}
+    
     maxClimbDownPower=climbPowerSetter.getSelected() * -1;
     //bl.set(-0.5);
     final int DPad = xbox.getPOV(0);
@@ -583,12 +645,7 @@ public class Robot extends TimedRobot {
     // }
     // else {indexer.set(-0.75);}
 
-    if ((indexer.getMotorTemperature()<45&&stopper.get())||(indexer.getMotorTemperature()<45&&!shootPhotoGate.get())){
-      indexer.set(-1);
-    }
-    else {
-      indexer.set(0);
-    }
+   
 
     //runClimb();
   }
@@ -635,21 +692,12 @@ public class Robot extends TimedRobot {
     }
   }
 
-  void setAngle(Rotation2d angle){
-    setRobotPose(new Pose2d(robotPose.getX(), robotPose.getY(), angle));
+  Rotation2d getIMUAngle(){
+    return Rotation2d.fromDegrees(imu.getAngle());
   }
 
-  double getAngleAsDegree(double leftDistance, double rightDistance){
-    return scaleAngle(((leftDistance - rightDistance) / ticksPerDegree) + angleOffset.getDegrees());
-  }
-
-  Rotation2d getAngle(double leftDistance, double rightDistance){
-    return Rotation2d.fromDegrees(getAngleAsDegree(leftDistance, rightDistance));
-  }
-
-  double scaleAngle(double rawAngle){
-    rawAngle = rawAngle % 360;
-    return (rawAngle < 0) ? rawAngle + 360 : rawAngle;
+  void resetAngle(){
+    imu.reset();
   }
 
   double getRightDriveTicks(){
@@ -660,14 +708,17 @@ public class Robot extends TimedRobot {
     return (fr.getSelectedSensorPosition() + br.getSelectedSensorPosition()) / 2;
   }
 
-  void setRobotPose(Pose2d setPose){
-    angle = setPose.getRotation();
+  double getLeftDriveDistance(){
+    return getLeftDriveTicks() * kEncoderDistancePerPulse;
+  }
 
+  double getRightDriveDistance(){
+    return getRightDriveTicks() * kEncoderDistancePerPulse;
+  }
+
+  void setRobotPose(Pose2d poseMeters){
+    m_odometry.resetPosition(poseMeters, getIMUAngle());
     resetDriveEncoders();
-    m_odometry.resetPosition(robotPose, angle);
-
-    angleOffset = angle;
-    robotPose = setPose;
   }
 
   void resetDriveEncoders(){
@@ -678,11 +729,7 @@ public class Robot extends TimedRobot {
   }
 
   void updateRobotPose(){
-      double leftDrivePos = getLeftDriveTicks();
-      double rightDrivePos = getRightDriveTicks();
-      
-      angle = getAngle(leftDrivePos, rightDrivePos);
-      robotPose = m_odometry.update(angle, leftDrivePos, rightDrivePos);
+     m_odometry.update(getIMUAngle(), getLeftDriveDistance(), getRightDriveDistance());
   }
 
   void newShoot(){
@@ -715,6 +762,111 @@ public class Robot extends TimedRobot {
       queuedShots--;
     }
   }
+
+  public void setMoveRobotInLine(double distance, double tolerance, int maxTimesInTolerance, double maxSpeed, double kp){
+    isRoataing = false;
+    isMoving = true;
+    
+    moveEnd = getAllDriveDistance() + distance;
+    moveTolerance = tolerance;
+    movekP = kp;
+    moveMaxSpeed = maxSpeed;
+    moveTimesInTolerance = 0;
+    moveMaxTimesInTolerance = maxTimesInTolerance;
+  }
+
+  public void setTurnRobotToAngle(double angle, double tolerance, int maxTimesInTolerance, double maxSpeed, double kp){
+    isMoving = false;
+    isRoataing = true;
+    
+    moveEnd = angle;
+    moveTolerance = tolerance;
+    movekP = kp;
+    moveMaxSpeed = maxSpeed;
+    moveMaxTimesInTolerance = maxTimesInTolerance;
+  }
+
+  public void moveRobot(){
+    double distance = moveEnd;
+    if(isMoving){
+      distance -= getAllDriveDistance();
+
+      if(Math.abs(distance) < moveTolerance){
+        moveTimesInTolerance++;
+        if(moveTimesInTolerance == moveMaxTimesInTolerance){
+          stopMoveRobot();
+          return;
+        }
+      }
+      else 
+        moveTimesInTolerance = 0;
+    
+      drive.arcadeDrive(Math.min(Math.max(distance * movekP, -moveMaxSpeed), moveMaxSpeed), 0);
+      return;
+    }
+    if(isRoataing){
+      distance -= imu.getAngle();
+
+      if(Math.abs(distance) < moveTolerance){
+        moveTimesInTolerance++;
+        if(moveTimesInTolerance == moveMaxTimesInTolerance){
+          stopMoveRobot();
+          return;
+        }
+      }
+      else 
+        moveTimesInTolerance = 0;
+    
+      drive.arcadeDrive(0, Math.min(Math.max(distance * movekP, -moveMaxSpeed), moveMaxSpeed));
+      return;
+    }
+    drive.arcadeDrive(0, 0);
+  }
+
+  public void stopMoveRobot(){
+    drive.arcadeDrive(0, 0);
+    isMoving = false;
+    isRoataing = false;
+  }
+
+  public boolean isRobotMovingInLine(){
+    return isMoving;
+  }
+
+  public boolean isRobotRotating(){
+    return isRoataing;
+  }
+
+  public boolean isRobotMoving(){
+    return isRoataing || isMoving;
+  }
+
+  public double getAllDriveTicks(){
+    return (fr.getSelectedSensorPosition() + br.getSelectedSensorPosition() + fl.getSelectedSensorPosition() + bl.getSelectedSensorPosition()) / 4.0;
+  }
+
+  public double getAllDriveDistance(){
+    return getAllDriveTicks() * kEncoderDistancePerPulse;
+  }
+
+  public void runIndexer(){
+    if ((indexer.getMotorTemperature()<45&&stopper.get())||(indexer.getMotorTemperature()<45&&!shootPhotoGate.get())){
+      indexer.set(-1);
+    }
+    else {
+    indexer.set(0);
+    }
+  }
+
+  /*
+  public void moveWheelRot(double rots, double speed, boolean intakeSide){
+    if (intakeSide) {speed = -speed;}
+    if (((-fr.getSelectedSensorPosition()+fl.getSelectedSensorPosition())/2)<gearRatio*encoderTicks){
+      drive.arcadeDrive(speed, 0);
+    }
+  }
+  */
+
   // public void generateTrajectory() {
   //   var sideStart = new Pose2d(Units.feetToMeters(1.54), Units.feetToMeters(23.23),
   //     Rotation2d.fromDegrees(-180));
